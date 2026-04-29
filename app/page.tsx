@@ -2,7 +2,7 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
-import { Phone, Upload, Users, History, BarChart3, Mic, TrendingUp, PhoneCall, XCircle, AlertCircle, Video, MessageCircle, Flame, Snowflake, Zap, ExternalLink, Star, Play, Pause, Square, Globe, MapPin, FileText } from "lucide-react";
+import { Phone, Upload, Users, History, BarChart3, Mic, TrendingUp, PhoneCall, XCircle, AlertCircle, Video, MessageCircle, Flame, Snowflake, Zap, ExternalLink, Star, Play, Square, MapPin } from "lucide-react";
 
 type Lead = {
   id: string;
@@ -40,11 +40,8 @@ type Call = {
 
 const T = {
   bg: "#0d0f14",
-  bgDeep: "#070810",
   card: "#161820",
-  cardHover: "#1c1f29",
   border: "#1f2235",
-  borderLight: "#2d3142",
   text: "#e8eaf0",
   textMuted: "#9ca3af",
   textDim: "#6b7280",
@@ -117,10 +114,19 @@ export default function Page() {
   const [autoCalling, setAutoCalling] = useState(false);
 
   async function refreshAll() {
-    const l = await fetch("/api/leads").then(r => r.json());
-    setLeads(l.leads || []);
-    const c = await fetch("/api/calls").then(r => r.json());
-    setCalls(c.calls || []);
+    try {
+      // Cache-buster query param + no-cache fetch options
+      const ts = Date.now();
+      const lRes = await fetch(`/api/leads?t=${ts}`, { cache: "no-store" });
+      const l = await lRes.json();
+      setLeads(l.leads || []);
+
+      const cRes = await fetch(`/api/calls?t=${ts}`, { cache: "no-store" });
+      const c = await cRes.json();
+      setCalls(c.calls || []);
+    } catch (err) {
+      console.error("Refresh error:", err);
+    }
   }
 
   useEffect(() => { refreshAll(); }, []);
@@ -140,6 +146,7 @@ export default function Page() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ leadId }),
+        cache: "no-store",
       });
       const data = await res.json();
       if (data.success) await refreshAll();
@@ -152,7 +159,7 @@ export default function Page() {
     if (!confirm("Start auto-calling? Isabell will call all Hot leads first, then Warm. Skips Cold.")) return;
     setAutoCalling(true);
     setLoading(true);
-    const res = await fetch("/api/call/next", { method: "POST" });
+    const res = await fetch("/api/call/next", { method: "POST", cache: "no-store" });
     const data = await res.json();
     setLoading(false);
     if (data.success) {
@@ -230,7 +237,6 @@ export default function Page() {
   );
 }
 
-// ============ DASHBOARD ============
 function DashboardTab({ leads, calls, autoCalling }: { leads: Lead[]; calls: Call[]; autoCalling: boolean }) {
   const today = new Date().toDateString();
   const todaysCalls = calls.filter(c => new Date(c.created_at).toDateString() === today);
@@ -261,7 +267,6 @@ function DashboardTab({ leads, calls, autoCalling }: { leads: Lead[]; calls: Cal
         )}
       </div>
 
-      {/* Top KPI row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
         <KPI label="Total leads" value={totalLeads} sub={`${leads.filter(l => l.status === "pending").length} pending`} color={T.text} />
         <KPI label="Calls made" value={callsMade} sub={`${todaysCalls.length} today`} color={T.cold} />
@@ -269,7 +274,6 @@ function DashboardTab({ leads, calls, autoCalling }: { leads: Lead[]; calls: Cal
         <KPI label="Call backs scheduled" value={callBacks} sub="needs follow-up" color={T.warm} icon={Phone} />
       </div>
 
-      {/* Priority queue row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
         <KPI label="🔥 Hot pending" value={hotPending} sub="call first" color={T.hot} />
         <KPI label="⚡ Warm pending" value={warmPending} sub="call after hot" color={T.warm} />
@@ -277,7 +281,6 @@ function DashboardTab({ leads, calls, autoCalling }: { leads: Lead[]; calls: Cal
         <KPI label="Avg call duration" value={`${Math.floor(avgDuration / 60)}:${String(avgDuration % 60).padStart(2, "0")}`} sub="per call" color={T.text} />
       </div>
 
-      {/* Funnel + Outcome breakdown */}
       <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 16, marginBottom: 16 }}>
         <div style={{ background: T.card, borderRadius: 14, padding: 22, border: `1px solid ${T.border}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -320,7 +323,6 @@ function DashboardTab({ leads, calls, autoCalling }: { leads: Lead[]; calls: Cal
         </div>
       </div>
 
-      {/* Recent activity */}
       <div style={{ background: T.card, borderRadius: 14, padding: 22, border: `1px solid ${T.border}` }}>
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14, color: T.text }}>Recent Calls</div>
         {calls.length === 0 ? (
@@ -359,7 +361,6 @@ function KPI({ label, value, sub, color, icon: Icon }: { label: string; value: a
   );
 }
 
-// ============ LEADS ============
 function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLoading }: any) {
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -372,7 +373,7 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
     const formData = new FormData();
     formData.append("file", file);
     setLoading(true);
-    const res = await fetch("/api/leads/upload", { method: "POST", body: formData });
+    const res = await fetch("/api/leads/upload", { method: "POST", body: formData, cache: "no-store" });
     const data = await res.json();
     setLoading(false);
     if (data.success) {
@@ -403,12 +404,16 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 4px", color: T.text }}>Leads</h1>
-        <p style={{ fontSize: 13, color: T.textDim, margin: 0 }}>Auto-analyzed by website status. Hot called first, Warm second, Cold skipped.</p>
+      <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 4px", color: T.text }}>Leads</h1>
+          <p style={{ fontSize: 13, color: T.textDim, margin: 0 }}>Auto-analyzed by website status. Hot called first, Warm second, Cold skipped.</p>
+        </div>
+        <button onClick={refreshAll} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card, color: T.textMuted, fontSize: 12, cursor: "pointer" }}>
+          ↻ Refresh
+        </button>
       </div>
 
-      {/* Drag & drop zone */}
       <div onClick={() => fileInputRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
@@ -427,28 +432,24 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
         <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileChange} style={{ display: "none" }} />
       </div>
 
-      {/* Filter pills */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          {[
-            { id: "all",  label: `All · ${counts.all}`,    color: T.text   },
-            { id: "hot",  label: `🔥 Hot · ${counts.hot}`, color: T.hot    },
-            { id: "warm", label: `⚡ Warm · ${counts.warm}`, color: T.warm },
-            { id: "cold", label: `❄ Cold · ${counts.cold}`,  color: T.cold },
-          ].map(f => (
-            <button key={f.id} onClick={() => setFilter(f.id)}
-              style={{
-                padding: "7px 14px", borderRadius: 20,
-                border: filter === f.id ? `1.5px solid ${f.color}` : `1px solid ${T.border}`,
-                background: filter === f.id ? `${f.color}22` : T.card,
-                color: filter === f.id ? f.color : T.textMuted,
-                fontSize: 12, fontWeight: 600, cursor: "pointer",
-              }}>{f.label}</button>
-          ))}
-        </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+        {[
+          { id: "all",  label: `All · ${counts.all}`,    color: T.text   },
+          { id: "hot",  label: `🔥 Hot · ${counts.hot}`, color: T.hot    },
+          { id: "warm", label: `⚡ Warm · ${counts.warm}`, color: T.warm },
+          { id: "cold", label: `❄ Cold · ${counts.cold}`,  color: T.cold },
+        ].map(f => (
+          <button key={f.id} onClick={() => setFilter(f.id)}
+            style={{
+              padding: "7px 14px", borderRadius: 20,
+              border: filter === f.id ? `1.5px solid ${f.color}` : `1px solid ${T.border}`,
+              background: filter === f.id ? `${f.color}22` : T.card,
+              color: filter === f.id ? f.color : T.textMuted,
+              fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}>{f.label}</button>
+        ))}
       </div>
 
-      {/* Lead table - rich rows like Picture 2 */}
       <div style={{ background: T.card, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1.2fr 1.3fr 0.9fr 0.8fr 0.9fr 1fr 100px", padding: "14px 16px", borderBottom: `1px solid ${T.border}`, fontSize: 10, color: T.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
           <div>Business</div>
@@ -475,7 +476,6 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
           const isCold = lead.priority === "cold";
           const reviewsLow = lead.reviews_count < 30;
 
-          // Web design badge
           const webDesignStyle = ws.webDesign === "None" ? { bg: T.hotBg, text: T.hot, border: T.hotBorder } :
                                   ws.webDesign === "Bad" ? { bg: T.warmBg, text: T.warm, border: T.warmBorder } :
                                   ws.webDesign === "Good" ? { bg: T.greenBg, text: T.green, border: `${T.green}55` } :
@@ -489,7 +489,6 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
               opacity: isCold ? 0.55 : 1,
               background: lead.priority === "hot" ? `${T.hotBg}33` : "transparent"
             }}>
-              {/* Business name + niche + analysis notes */}
               <div>
                 <div style={{ fontWeight: 600, color: T.text, marginBottom: 4, lineHeight: 1.3 }}>{lead.business_name}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
@@ -507,10 +506,8 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
                 )}
               </div>
 
-              {/* Phone */}
               <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.textMuted }}>{lead.phone}</div>
 
-              {/* Website link or label */}
               <div>
                 {lead.website && lead.website_status !== "none" ? (
                   <a href={lead.website} target="_blank" rel="noreferrer"
@@ -522,32 +519,27 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
                 )}
               </div>
 
-              {/* Web Design pill */}
               <div>
                 <span style={{ background: webDesignStyle.bg, color: webDesignStyle.text, fontSize: 10, padding: "3px 9px", borderRadius: 12, fontWeight: 600, border: `1px solid ${webDesignStyle.border}` }}>
                   {ws.webDesign}
                 </span>
               </div>
 
-              {/* Rating */}
               <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: T.text }}>
                 <Star size={11} fill={T.warm} color={T.warm} />
                 <span style={{ fontWeight: 600 }}>{lead.rating || "—"}</span>
               </div>
 
-              {/* Reviews count */}
               <div style={{ fontSize: 12, color: reviewsLow ? T.hot : T.textMuted, fontWeight: reviewsLow ? 600 : 400 }}>
                 {lead.reviews_count}
               </div>
 
-              {/* Priority */}
               <div>
                 <span style={{ background: p.bg, color: p.text, fontSize: 11, padding: "5px 10px", borderRadius: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${p.border}` }}>
                   <PIcon size={11} /> {p.label}
                 </span>
               </div>
 
-              {/* Action button */}
               <div>
                 {!isCold ? (
                   <button onClick={() => onCall(lead.id)} disabled={loading}
@@ -566,7 +558,6 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
   );
 }
 
-// ============ HISTORY ============
 function HistoryTab({ calls, selectedCall, setSelectedCall }: any) {
   if (calls.length === 0) {
     return <div style={{ color: T.textDim, padding: 40, textAlign: "center", background: T.card, borderRadius: 12, border: `1px solid ${T.border}` }}>No calls yet. Hit "Start Calling" to begin.</div>;
@@ -645,7 +636,6 @@ function HistoryTab({ calls, selectedCall, setSelectedCall }: any) {
   );
 }
 
-// ============ AGENT ============
 function AgentTab() {
   return (
     <div>
@@ -674,7 +664,6 @@ function AgentTab() {
   );
 }
 
-// ============ ANALYTICS ============
 function AnalyticsTab({ calls, leads }: { calls: Call[]; leads: Lead[] }) {
   const total = calls.length || 1;
   const connected = calls.filter(c => c.duration_seconds > 10).length;
