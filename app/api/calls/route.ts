@@ -1,28 +1,39 @@
-// app/api/calls/route.ts
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET() {
-  // Join calls with lead info for display
-  const { data, error } = await supabase
-    .from("calls")
-    .select(`
-      *,
-      leads (business_name, contact_name, niche)
-    `)
-    .order("created_at", { ascending: false });
+  try {
+    const { data, error } = await supabase
+      .from("calls")
+      .select(`*, leads (business_name, contact_name, niche)`)
+      .order("created_at", { ascending: false })
+      .limit(500);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json(
+        { calls: [], error: error.message },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
 
-  // Flatten the joined data
-  const calls = (data || []).map((c: any) => ({
-    ...c,
-    business_name: c.leads?.business_name,
-    contact_name: c.leads?.contact_name,
-    niche: c.leads?.niche,
-  }));
+    const calls = (data || []).map((c: any) => ({
+      ...c,
+      business_name: c.leads?.business_name,
+      contact_name: c.leads?.contact_name,
+      niche: c.leads?.niche,
+    }));
 
-  return NextResponse.json({ calls });
+    return NextResponse.json(
+      { calls },
+      { headers: { "Cache-Control": "no-store, max-age=0, must-revalidate" } }
+    );
+  } catch (err: any) {
+    return NextResponse.json(
+      { calls: [], error: err.message },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  }
 }
