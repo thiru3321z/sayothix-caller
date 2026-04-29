@@ -582,18 +582,25 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
           const isPending = lead.website_status === "pending-analysis";
 
           // Web design pill
-          let webDesignStyle = { bg: "#1f2235", text: T.textDim, border: T.border };
+         let webDesignStyle = { bg: "#1f2235", text: T.textDim, border: T.border };
           let webDesignLabel = ws.webDesign;
 
           if (ws.webDesign === "None") {
             webDesignStyle = { bg: T.hotBg, text: T.hot, border: T.hotBorder };
           } else if (lead.design_score !== null && lead.design_score !== undefined) {
-            if (lead.design_score < 4) {
+            const s = lead.design_score;
+            if (s <= 3) {
+              webDesignStyle = { bg: T.hotBg, text: T.hot, border: T.hotBorder };
+              webDesignLabel = `Bad ${s}/10`;
+            } else if (s <= 5) {
               webDesignStyle = { bg: T.warmBg, text: T.warm, border: T.warmBorder };
-              webDesignLabel = `Bad ${lead.design_score}/10`;
-            } else {
+              webDesignLabel = `Average ${s}/10`;
+            } else if (s <= 7) {
               webDesignStyle = { bg: T.greenBg, text: T.green, border: `${T.green}55` };
-              webDesignLabel = `Good ${lead.design_score}/10`;
+              webDesignLabel = `Good ${s}/10`;
+            } else {
+              webDesignStyle = { bg: T.accentBg, text: T.accent, border: T.accentBorder };
+              webDesignLabel = `Excellent ${s}/10`;
             }
           } else if (isPending) {
             webDesignStyle = { bg: T.accentBg, text: T.accent, border: T.accentBorder };
