@@ -1,5 +1,6 @@
 // app/api/leads/upload/route.ts
-// Accepts CSV → analyzes each lead → inserts to Supabase with priority
+// Quick analysis on upload, returns instantly
+// Websites are queued for AI analysis
 
 import { NextRequest, NextResponse } from "next/server";
 import Papa from "papaparse";
@@ -16,7 +17,6 @@ function normalizeRow(row: any): RawLead {
     }
     return "";
   };
-
   return {
     title: get("title", "business_name", "name", "business", "company"),
     rating: get("rating", "stars"),
@@ -39,19 +39,19 @@ export async function POST(req: NextRequest) {
     const parsed = Papa.parse<any>(text, { header: true, skipEmptyLines: true });
 
     if (parsed.errors.length > 0 && parsed.data.length === 0) {
-      return NextResponse.json({ error: "CSV parse failed", details: parsed.errors }, { status: 400 });
+      return NextResponse.json({ error: "CSV parse failed" }, { status: 400 });
     }
 
-    const analyzedLeads = parsed.data
+    const analyzed = parsed.data
       .map(normalizeRow)
       .filter(r => r.title && r.phone)
       .map(analyzeLead);
 
-    if (analyzedLeads.length === 0) {
+    if (analyzed.length === 0) {
       return NextResponse.json({ error: "No valid leads (need title + phone columns)" }, { status: 400 });
     }
 
-    const dbRows = analyzedLeads.map(l => ({
+    const dbRows = analyzed.map(l => ({
       business_name: l.business_name,
       niche: l.niche,
       contact_name: l.contact_name,
@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
       priority: l.priority,
       analysis_notes: l.analysis_notes,
       status: l.status,
+      design_score: l.design_score,
     }));
 
     const { error } = await supabase.from("leads").insert(dbRows);
@@ -76,6 +77,7 @@ export async function POST(req: NextRequest) {
       hot: dbRows.filter(l => l.priority === "hot").length,
       warm: dbRows.filter(l => l.priority === "warm").length,
       cold: dbRows.filter(l => l.priority === "cold").length,
+      pending_analysis: analyzed.filter(l => l.needs_ai_analysis).length,
     };
 
     return NextResponse.json({ success: true, count: dbRows.length, stats });
