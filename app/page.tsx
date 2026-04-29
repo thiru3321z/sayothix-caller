@@ -2,7 +2,7 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
-import { Phone, Upload, Users, History, BarChart3, Mic, TrendingUp, PhoneCall, XCircle, AlertCircle, Video, MessageCircle, Flame, Snowflake, Zap, ExternalLink, Star, Play, Square, MapPin } from "lucide-react";
+import { Phone, Upload, Users, History, BarChart3, Mic, TrendingUp, PhoneCall, XCircle, AlertCircle, Video, MessageCircle, Flame, Snowflake, Zap, ExternalLink, Star, Play, Square, MapPin, Trash2, Search, Sparkles, Loader2 } from "lucide-react";
 
 type Lead = {
   id: string;
@@ -20,6 +20,7 @@ type Lead = {
   priority: "hot" | "warm" | "cold";
   analysis_notes: string;
   status: string;
+  design_score: number | null;
 };
 
 type Call = {
@@ -39,26 +40,13 @@ type Call = {
 };
 
 const T = {
-  bg: "#0d0f14",
-  card: "#161820",
-  border: "#1f2235",
-  text: "#e8eaf0",
-  textMuted: "#9ca3af",
-  textDim: "#6b7280",
-  textVeryDim: "#4b5563",
-  accent: "#a855f7",
-  accentBg: "#1a1025",
-  accentBorder: "#a855f755",
-  green: "#22c87a",
-  greenBg: "#0d1f14",
-  hot: "#ef4444",
-  hotBg: "#1c0d0d",
-  hotBorder: "#ef444455",
-  warm: "#f59e0b",
-  warmBg: "#1c1505",
-  warmBorder: "#f59e0b55",
-  cold: "#3b82f6",
-  coldBg: "#0d1525",
+  bg: "#0d0f14", card: "#161820", border: "#1f2235",
+  text: "#e8eaf0", textMuted: "#9ca3af", textDim: "#6b7280", textVeryDim: "#4b5563",
+  accent: "#a855f7", accentBg: "#1a1025", accentBorder: "#a855f755",
+  green: "#22c87a", greenBg: "#0d1f14",
+  hot: "#ef4444", hotBg: "#1c0d0d", hotBorder: "#ef444455",
+  warm: "#f59e0b", warmBg: "#1c1505", warmBorder: "#f59e0b55",
+  cold: "#3b82f6", coldBg: "#0d1525",
 };
 
 const statusStyles: Record<string, { bg: string; text: string; label: string }> = {
@@ -78,12 +66,12 @@ const priorityStyles: Record<string, { bg: string; text: string; border: string;
   "cold": { bg: T.coldBg, text: T.cold, border: "#3b82f655",  icon: Snowflake, label: "Cold" },
 };
 
-const websiteStatusLabels: Record<string, { label: string; color: string; bg: string; webDesign: string }> = {
-  "none":          { label: "No website",     color: T.hot,   bg: T.hotBg,   webDesign: "None" },
-  "whatsapp-only": { label: "WhatsApp only",  color: T.hot,   bg: T.hotBg,   webDesign: "None" },
-  "social-only":   { label: "Social only",    color: T.hot,   bg: T.hotBg,   webDesign: "None" },
-  "bad-website":   { label: "Weak website",   color: T.warm,  bg: T.warmBg,  webDesign: "Bad" },
-  "good-website":  { label: "Has website",    color: T.green, bg: T.greenBg, webDesign: "Good" },
+const websiteStatusLabels: Record<string, { label: string; color: string; webDesign: string }> = {
+  "none":              { label: "No website",     color: T.hot,    webDesign: "None" },
+  "whatsapp-only":     { label: "WhatsApp only",  color: T.hot,    webDesign: "None" },
+  "social-only":       { label: "Social only",    color: T.hot,    webDesign: "None" },
+  "pending-analysis":  { label: "Analyzing...",   color: T.accent, webDesign: "..." },
+  "has-website":       { label: "Has website",    color: T.green,  webDesign: "Scored" },
 };
 
 const outcomeStyles: Record<string, { bg: string; text: string; icon: any; label: string }> = {
@@ -111,25 +99,43 @@ export default function Page() {
   const [selectedCall, setSelectedCall] = useState(0);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<"all" | "hot" | "warm" | "cold">("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [autoCalling, setAutoCalling] = useState(false);
+  const [analyzingAI, setAnalyzingAI] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState({ done: 0, total: 0 });
 
   async function refreshAll() {
     try {
-      // Cache-buster query param + no-cache fetch options
       const ts = Date.now();
       const lRes = await fetch(`/api/leads?t=${ts}`, { cache: "no-store" });
       const l = await lRes.json();
       setLeads(l.leads || []);
-
       const cRes = await fetch(`/api/calls?t=${ts}`, { cache: "no-store" });
       const c = await cRes.json();
       setCalls(c.calls || []);
-    } catch (err) {
-      console.error("Refresh error:", err);
-    }
+    } catch (err) { console.error("Refresh error:", err); }
   }
 
   useEffect(() => { refreshAll(); }, []);
+
+  // Background AI analyzer — keeps polling until all websites are analyzed
+  async function runAIAnalysis() {
+    setAnalyzingAI(true);
+    let total = leads.filter(l => l.website_status === "pending-analysis").length;
+    setAnalysisProgress({ done: 0, total });
+
+    while (true) {
+      const res = await fetch("/api/leads/analyze", { method: "POST", cache: "no-store" });
+      const data = await res.json();
+      if (!data.success || data.processed === 0) break;
+      await refreshAll();
+      const newPending = data.remaining || 0;
+      setAnalysisProgress({ done: total - newPending, total });
+      if (newPending === 0) break;
+    }
+    setAnalyzingAI(false);
+    await refreshAll();
+  }
 
   const tabs = [
     { id: "dashboard", label: "Dashboard",    icon: BarChart3 },
@@ -143,10 +149,8 @@ export default function Page() {
     setLoading(true);
     try {
       const res = await fetch("/api/call", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId }),
-        cache: "no-store",
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId }), cache: "no-store",
       });
       const data = await res.json();
       if (data.success) await refreshAll();
@@ -163,7 +167,7 @@ export default function Page() {
     const data = await res.json();
     setLoading(false);
     if (data.success) {
-      alert(`📞 Calling ${data.lead.business_name} (${data.lead.priority.toUpperCase()})\n\nIsabell is on the line. Check Call History after she finishes.`);
+      alert(`📞 Calling ${data.lead.business_name} (${data.lead.priority.toUpperCase()})`);
       await refreshAll();
     } else {
       alert(data.message || data.error || "No leads to call");
@@ -171,10 +175,7 @@ export default function Page() {
     }
   }
 
-  function handleStopCalling() {
-    setAutoCalling(false);
-    alert("Stopped. Any in-progress call will continue, but no new ones will start.");
-  }
+  function handleStopCalling() { setAutoCalling(false); }
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
@@ -186,7 +187,15 @@ export default function Page() {
             <div style={{ fontSize: 11, color: T.textDim }}>AI agent · Isabell · Johor Bahru</div>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {analyzingAI && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", background: T.accentBg, border: `1px solid ${T.accentBorder}`, borderRadius: 20 }}>
+              <Loader2 size={12} color={T.accent} style={{ animation: "spin 1s linear infinite" }} />
+              <span style={{ fontSize: 11, color: T.accent, fontWeight: 600 }}>
+                AI analyzing {analysisProgress.done}/{analysisProgress.total}
+              </span>
+            </div>
+          )}
           {!autoCalling ? (
             <button onClick={handleStartCalling} disabled={loading}
               style={{ padding: "10px 20px", borderRadius: 8, border: "none",
@@ -198,8 +207,7 @@ export default function Page() {
           ) : (
             <button onClick={handleStopCalling}
               style={{ padding: "10px 20px", borderRadius: 8, border: "none",
-                background: T.hot, color: "#fff", fontSize: 13, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 8, fontWeight: 700 }}>
+                background: T.hot, color: "#fff", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontWeight: 700 }}>
               <Square size={12} fill="#fff" /> Stop Calling
             </button>
           )}
@@ -227,12 +235,14 @@ export default function Page() {
 
         <div style={{ flex: 1, padding: 28, overflow: "auto" }}>
           {activeTab === "dashboard" && <DashboardTab leads={leads} calls={calls} autoCalling={autoCalling} />}
-          {activeTab === "leads"     && <LeadsTab leads={leads} filter={filter} setFilter={setFilter} onCall={handleCall} loading={loading} refreshAll={refreshAll} setLoading={setLoading} />}
+          {activeTab === "leads"     && <LeadsTab leads={leads} filter={filter} setFilter={setFilter} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onCall={handleCall} loading={loading} refreshAll={refreshAll} setLoading={setLoading} runAIAnalysis={runAIAnalysis} analyzingAI={analyzingAI} />}
           {activeTab === "history"   && <HistoryTab calls={calls} selectedCall={selectedCall} setSelectedCall={setSelectedCall} />}
           {activeTab === "agent"     && <AgentTab />}
           {activeTab === "analytics" && <AnalyticsTab calls={calls} leads={leads} />}
         </div>
       </div>
+
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
@@ -361,7 +371,7 @@ function KPI({ label, value, sub, color, icon: Icon }: { label: string; value: a
   );
 }
 
-function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLoading }: any) {
+function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCall, loading, refreshAll, setLoading, runAIAnalysis, analyzingAI }: any) {
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -377,7 +387,8 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
     const data = await res.json();
     setLoading(false);
     if (data.success) {
-      alert(`✅ Imported ${data.count} leads\n🔥 ${data.stats.hot} Hot · ⚡ ${data.stats.warm} Warm · ❄ ${data.stats.cold} Cold`);
+      const pendingMsg = data.stats.pending_analysis > 0 ? `\n\n🤖 ${data.stats.pending_analysis} websites queued for AI analysis. Click "Analyze Websites" to begin.` : "";
+      alert(`✅ Imported ${data.count} leads\n🔥 ${data.stats.hot} Hot · ⚡ ${data.stats.warm} Warm · ❄ ${data.stats.cold} Cold${pendingMsg}`);
       await refreshAll();
     } else alert("Upload failed: " + data.error);
   }
@@ -394,24 +405,65 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
     if (file) uploadFile(file);
   }
 
-  const filtered = filter === "all" ? leads : leads.filter((l: Lead) => l.priority === filter);
+  async function handleClearAll() {
+    if (!confirm("⚠️ Clear ALL leads and call history? This cannot be undone.")) return;
+    if (!confirm("Are you absolutely sure? Type-confirm not required, but this is your last chance.")) return;
+    setLoading(true);
+    const res = await fetch("/api/leads/clear", { method: "POST", cache: "no-store" });
+    const data = await res.json();
+    setLoading(false);
+    if (data.success) {
+      await refreshAll();
+    } else alert("Clear failed: " + data.error);
+  }
+
+  // Filter + search
+  let filtered = filter === "all" ? leads : leads.filter((l: Lead) => l.priority === filter);
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase();
+    filtered = filtered.filter((l: Lead) =>
+      (l.business_name || "").toLowerCase().includes(q) ||
+      (l.phone || "").toLowerCase().includes(q) ||
+      (l.address || "").toLowerCase().includes(q) ||
+      (l.niche || "").toLowerCase().includes(q) ||
+      (l.website || "").toLowerCase().includes(q)
+    );
+  }
+
   const counts = {
     all: leads.length,
     hot: leads.filter((l: Lead) => l.priority === "hot").length,
     warm: leads.filter((l: Lead) => l.priority === "warm").length,
     cold: leads.filter((l: Lead) => l.priority === "cold").length,
   };
+  const pendingAnalysisCount = leads.filter((l: Lead) => l.website_status === "pending-analysis").length;
 
   return (
     <div>
       <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 4px", color: T.text }}>Leads</h1>
-          <p style={{ fontSize: 13, color: T.textDim, margin: 0 }}>Auto-analyzed by website status. Hot called first, Warm second, Cold skipped.</p>
+          <p style={{ fontSize: 13, color: T.textDim, margin: 0 }}>Hot called first, Warm second, Cold skipped.</p>
         </div>
-        <button onClick={refreshAll} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card, color: T.textMuted, fontSize: 12, cursor: "pointer" }}>
-          ↻ Refresh
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {pendingAnalysisCount > 0 && (
+            <button onClick={runAIAnalysis} disabled={analyzingAI}
+              style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.accentBorder}`, background: T.accentBg, color: T.accent, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+              {analyzingAI ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Sparkles size={12} />}
+              Analyze {pendingAnalysisCount} Websites
+            </button>
+          )}
+          <button onClick={refreshAll}
+            style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card, color: T.textMuted, fontSize: 12, cursor: "pointer" }}>
+            ↻ Refresh
+          </button>
+          {leads.length > 0 && (
+            <button onClick={handleClearAll}
+              style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.hotBorder}`, background: T.hotBg, color: T.hot, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+              <Trash2 size={12} /> Clear Table
+            </button>
+          )}
+        </div>
       </div>
 
       <div onClick={() => fileInputRef.current?.click()}
@@ -426,10 +478,33 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
         }}>
         <Upload size={28} color={dragging ? T.accent : T.textDim} style={{ marginBottom: 10 }} />
         <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 4 }}>
-          {loading ? "Analyzing & uploading..." : dragging ? "Drop CSV here" : "Drag & drop CSV or click to browse"}
+          {loading ? "Processing..." : dragging ? "Drop CSV here" : "Drag & drop CSV or click to browse"}
         </div>
         <div style={{ fontSize: 11, color: T.textDim }}>Auto-detects: Title, Phone, Industry, Website, Address, Reviews, Rating</div>
         <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileChange} style={{ display: "none" }} />
+      </div>
+
+      {/* Search bar */}
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <Search size={14} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: T.textDim }} />
+        <input
+          type="text"
+          placeholder="Search by business name, phone, address, niche, or website..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{
+            width: "100%", padding: "10px 14px 10px 38px",
+            background: T.card, border: `1px solid ${T.border}`,
+            borderRadius: 10, color: T.text, fontSize: 13,
+            outline: "none",
+          }}
+        />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery("")}
+            style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: T.textDim, cursor: "pointer", padding: 4 }}>
+            <XCircle size={14} />
+          </button>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
@@ -448,38 +523,50 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
               fontSize: 12, fontWeight: 600, cursor: "pointer",
             }}>{f.label}</button>
         ))}
+        {searchQuery && (
+          <span style={{ fontSize: 11, color: T.textDim, marginLeft: 8 }}>
+            {filtered.length} match{filtered.length !== 1 ? "es" : ""} for "{searchQuery}"
+          </span>
+        )}
       </div>
 
       <div style={{ background: T.card, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1.2fr 1.3fr 0.9fr 0.8fr 0.9fr 1fr 100px", padding: "14px 16px", borderBottom: `1px solid ${T.border}`, fontSize: 10, color: T.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
-          <div>Business</div>
-          <div>Phone</div>
-          <div>Website</div>
-          <div>Web Design</div>
-          <div>Rating</div>
-          <div>Reviews</div>
-          <div>Priority</div>
-          <div></div>
+          <div>Business</div><div>Phone</div><div>Website</div><div>Web Design</div><div>Rating</div><div>Reviews</div><div>Priority</div><div></div>
         </div>
 
         {filtered.length === 0 && (
           <div style={{ padding: 60, textAlign: "center", color: T.textDim, fontSize: 13 }}>
-            No leads {filter !== "all" ? `with priority "${filter}"` : ""}. Upload a CSV to begin.
+            {searchQuery ? `No leads match "${searchQuery}".` : `No leads ${filter !== "all" ? `with priority "${filter}"` : ""}. Upload a CSV to begin.`}
           </div>
         )}
 
         {filtered.map((lead: Lead) => {
           const p = priorityStyles[lead.priority] || priorityStyles.warm;
           const PIcon = p.icon;
-          const ws = websiteStatusLabels[lead.website_status] || { label: lead.website_status, color: T.textDim, bg: T.border, webDesign: "—" };
+          const ws = websiteStatusLabels[lead.website_status] || { label: lead.website_status, color: T.textDim, webDesign: "—" };
           const n = nicheColors[lead.niche] || nicheColors.Other;
           const isCold = lead.priority === "cold";
-          const reviewsLow = lead.reviews_count < 30;
+          const isPending = lead.website_status === "pending-analysis";
 
-          const webDesignStyle = ws.webDesign === "None" ? { bg: T.hotBg, text: T.hot, border: T.hotBorder } :
-                                  ws.webDesign === "Bad" ? { bg: T.warmBg, text: T.warm, border: T.warmBorder } :
-                                  ws.webDesign === "Good" ? { bg: T.greenBg, text: T.green, border: `${T.green}55` } :
-                                  { bg: "#1f2235", text: T.textDim, border: T.border };
+          // Web design pill
+          let webDesignStyle = { bg: "#1f2235", text: T.textDim, border: T.border };
+          let webDesignLabel = ws.webDesign;
+
+          if (ws.webDesign === "None") {
+            webDesignStyle = { bg: T.hotBg, text: T.hot, border: T.hotBorder };
+          } else if (lead.design_score !== null && lead.design_score !== undefined) {
+            if (lead.design_score < 4) {
+              webDesignStyle = { bg: T.warmBg, text: T.warm, border: T.warmBorder };
+              webDesignLabel = `Bad ${lead.design_score}/10`;
+            } else {
+              webDesignStyle = { bg: T.greenBg, text: T.green, border: `${T.green}55` };
+              webDesignLabel = `Good ${lead.design_score}/10`;
+            }
+          } else if (isPending) {
+            webDesignStyle = { bg: T.accentBg, text: T.accent, border: T.accentBorder };
+            webDesignLabel = "...";
+          }
 
           return (
             <div key={lead.id} style={{
@@ -520,8 +607,9 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
               </div>
 
               <div>
-                <span style={{ background: webDesignStyle.bg, color: webDesignStyle.text, fontSize: 10, padding: "3px 9px", borderRadius: 12, fontWeight: 600, border: `1px solid ${webDesignStyle.border}` }}>
-                  {ws.webDesign}
+                <span style={{ background: webDesignStyle.bg, color: webDesignStyle.text, fontSize: 10, padding: "3px 9px", borderRadius: 12, fontWeight: 600, border: `1px solid ${webDesignStyle.border}`, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  {isPending && <Loader2 size={9} style={{ animation: "spin 1s linear infinite" }} />}
+                  {webDesignLabel}
                 </span>
               </div>
 
@@ -530,7 +618,7 @@ function LeadsTab({ leads, filter, setFilter, onCall, loading, refreshAll, setLo
                 <span style={{ fontWeight: 600 }}>{lead.rating || "—"}</span>
               </div>
 
-              <div style={{ fontSize: 12, color: reviewsLow ? T.hot : T.textMuted, fontWeight: reviewsLow ? 600 : 400 }}>
+              <div style={{ fontSize: 12, color: lead.reviews_count < 30 ? T.hot : T.textMuted, fontWeight: lead.reviews_count < 30 ? 600 : 400 }}>
                 {lead.reviews_count}
               </div>
 
