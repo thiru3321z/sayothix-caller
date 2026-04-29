@@ -119,22 +119,54 @@ export default function Page() {
   useEffect(() => { refreshAll(); }, []);
 
   // Background AI analyzer — keeps polling until all websites are analyzed
-  async function runAIAnalysis() {
+ async function runAIAnalysis() {
     setAnalyzingAI(true);
-    let total = leads.filter(l => l.website_status === "pending-analysis").length;
+ 
+    // Get accurate starting count from the database
+    const startRes = await fetch(`/api/leads?t=${Date.now()}`, { cache: "no-store" });
+    const startData = await startRes.json();
+    const total = (startData.leads || []).filter((l: any) => l.website_status === "pending-analysis").length;
+ 
+    if (total === 0) {
+      setAnalyzingAI(false);
+      alert("No websites to analyze!");
+      return;
+    }
+ 
     setAnalysisProgress({ done: 0, total });
-
-    while (true) {
+ 
+    let done = 0;
+    let safetyLimit = 50; // max 50 batches = 1000 sites
+ 
+    while (safetyLimit-- > 0) {
       const res = await fetch("/api/leads/analyze", { method: "POST", cache: "no-store" });
       const data = await res.json();
-      if (!data.success || data.processed === 0) break;
+ 
+      if (!data.success) {
+        console.error("Analyzer error:", data.error);
+        break;
+      }
+ 
+      if (data.processed === 0) break;
+ 
+      done += data.processed;
+      const remaining = data.remaining || 0;
+ 
+      // Update progress immediately
+      setAnalysisProgress({ done: total - remaining, total });
+ 
+      // Refresh leads in UI
       await refreshAll();
-      const newPending = data.remaining || 0;
-      setAnalysisProgress({ done: total - newPending, total });
-      if (newPending === 0) break;
+ 
+      if (remaining === 0) break;
+ 
+      // Small pause between batches to be kind to the API
+      await new Promise(r => setTimeout(r, 500));
     }
+ 
     setAnalyzingAI(false);
     await refreshAll();
+    alert(`✅ Analysis complete! Check the Leads tab.`);
   }
 
   const tabs = [
