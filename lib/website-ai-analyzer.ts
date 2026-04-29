@@ -9,7 +9,6 @@ interface AnalysisResult {
   gaps: string[];
 }
 
-// Realistic browser headers — defeats most bot-detection walls
 const BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -25,7 +24,6 @@ const BROWSER_HEADERS = {
 };
 
 async function fetchWebsiteHtml(url: string): Promise<{ html: string; blocked: boolean; error?: string }> {
-  // Make sure URL has protocol
   let cleanUrl = url.trim();
   if (!cleanUrl.startsWith("http")) cleanUrl = "https://" + cleanUrl;
 
@@ -37,7 +35,6 @@ async function fetchWebsiteHtml(url: string): Promise<{ html: string; blocked: b
     });
 
     if (!res.ok) {
-      // 403/429 usually = bot wall
       if (res.status === 403 || res.status === 429) {
         return { html: "", blocked: true, error: `Status ${res.status}` };
       }
@@ -45,19 +42,11 @@ async function fetchWebsiteHtml(url: string): Promise<{ html: string; blocked: b
     }
 
     const html = await res.text();
-
-    // Detect Cloudflare/bot-wall pages by content
     const lower = html.toLowerCase();
     const botWallSigns = [
-      "checking your browser",
-      "cloudflare",
-      "ray id",
-      "verify you are human",
-      "cf-browser-verification",
-      "captcha",
-      "challenge-platform",
-      "ddos protection",
-      "just a moment",
+      "checking your browser", "cloudflare", "ray id",
+      "verify you are human", "cf-browser-verification",
+      "captcha", "challenge-platform", "ddos protection", "just a moment",
     ];
     const isBotWall = botWallSigns.filter(s => lower.includes(s)).length >= 2;
 
@@ -75,7 +64,6 @@ export async function analyzeWebsiteWithAI(url: string, businessName: string): P
 
   const { html, blocked, error } = await fetchWebsiteHtml(url);
 
-  // If bot-walled or fetch error, treat as Warm (we can't see it = potential opportunity)
   if (blocked) {
     return {
       score: 5,
@@ -143,20 +131,56 @@ ${html}`;
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Claude API error:", response.status, errText);
-      return { score: 5, notes: "AI analysis failed", priority: "cold", status: "skipped", gaps: [] };
+      console.error(`[Analyzer] Claude HTTP ${response.status} for ${url}:`, errText.slice(0, 300));
+      return {
+        score: 5,
+        notes: `⚠️ Claude API ${response.status}. Marked for review.`,
+        priority: "warm",
+        status: "pending",
+        gaps: ["needs-manual-review"],
+      };
     }
 
     const data = await response.json();
     const text = data.content?.[0]?.text || "";
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
+
+    if (!text) {
+      console.error(`[Analyzer] Empty Claude response for ${url}`);
+      return {
+        score: 5,
+        notes: `⚠️ Empty AI response. Marked for review.`,
+        priority: "warm",
+        status: "pending",
+        gaps: ["needs-manual-review"],
+      };
+    }
+
+    // Extract JSON robustly — strip markdown, find object boundaries
+    let cleaned = text.replace(/```json|```/g, "").trim();
+    const jsonStart = cleaned.indexOf("{");
+    const jsonEnd = cleaned.lastIndexOf("}");
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error(`[Analyzer] JSON parse failed for ${url}. Raw:`, text.slice(0, 300));
+      return {
+        score: 5,
+        notes: `⚠️ AI returned invalid JSON. Marked for review.`,
+        priority: "warm",
+        status: "pending",
+        gaps: ["needs-manual-review"],
+      };
+    }
 
     const score = Number(parsed.score) || 5;
     const summary = parsed.summary || "Analyzed";
     const issues = Array.isArray(parsed.key_issues) ? parsed.key_issues : [];
 
-    // NEW THRESHOLD: <= 5 is Warm
     if (score <= 5) {
       return {
         score,
@@ -175,7 +199,13 @@ ${html}`;
       };
     }
   } catch (e: any) {
-    console.error("AI parse error:", e);
-    return { score: 5, notes: `AI parse failed: ${e.message}`, priority: "cold", status: "skipped", gaps: [] };
+    console.error(`[Analyzer] Exception for ${url}:`, e.message);
+    return {
+      score: 5,
+      notes: `⚠️ Exception: ${e.message.slice(0, 80)}`,
+      priority: "warm",
+      status: "pending",
+      gaps: ["needs-manual-review"],
+    };
   }
 }
