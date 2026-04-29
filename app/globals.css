@@ -1,9 +1,0 @@
-html, body {
-  margin: 0;
-  padding: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #F1EFE8;
-}
-
-* { box-sizing: border-box; }
-button { font-family: inherit; }
