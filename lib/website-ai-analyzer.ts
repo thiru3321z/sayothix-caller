@@ -1,5 +1,5 @@
 // lib/website-ai-analyzer.ts
-// Threshold: score <= 5 = WARM (rebuild opportunity), > 5 = COLD (skip)
+// Threshold: score <= 5 = WARM, > 5 = COLD
 
 interface AnalysisResult {
   score: number;
@@ -50,10 +50,27 @@ async function fetchWebsiteHtml(url: string): Promise<{ html: string; blocked: b
     ];
     const isBotWall = botWallSigns.filter(s => lower.includes(s)).length >= 2;
 
-    return { html: html.slice(0, 15000), blocked: isBotWall };
+    return { html, blocked: isBotWall };
   } catch (e: any) {
     return { html: "", blocked: false, error: e.message };
   }
+}
+
+// Strip HTML down to clean, JSON-safe content
+function sanitizeHtml(html: string): string {
+  return html
+    // Remove scripts and styles entirely (huge size reduction)
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    // Strip control characters that break JSON
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    // Collapse whitespace
+    .replace(/\s+/g, " ")
+    .trim()
+    // Limit to 8kb — plenty for design analysis
+    .slice(0, 8000);
 }
 
 export async function analyzeWebsiteWithAI(url: string, businessName: string): Promise<AnalysisResult> {
@@ -67,7 +84,7 @@ export async function analyzeWebsiteWithAI(url: string, businessName: string): P
   if (blocked) {
     return {
       score: 5,
-      notes: `⚡ Site blocks automated checks (Cloudflare/bot-wall). Manual review recommended.`,
+      notes: `⚡ Site blocks automated checks. Manual review recommended.`,
       priority: "warm",
       status: "pending",
       gaps: ["needs-manual-review"],
@@ -83,36 +100,38 @@ export async function analyzeWebsiteWithAI(url: string, businessName: string): P
     };
   }
 
+  const sanitizedHtml = sanitizeHtml(html);
+
   const prompt = `You are evaluating a Malaysian business website for a digital marketing agency that pitches website redesigns.
 
 Business: ${businessName}
 URL: ${url}
 
-Below is the HTML (first 15kb). Score this website 1-10 on overall design quality, considering:
-- Modern visual design (responsive, clean layout, typography)
+Below is the cleaned HTML content. Score this website 1-10 on overall design quality:
+- Modern visual design (responsive, clean, typography)
 - First impression / professional look
-- Conversion elements (clear CTAs, contact info, services)
+- Conversion elements (CTAs, contact info, services)
 - Service information completeness
-- Trust signals (testimonials, real photos vs stock, credentials)
+- Trust signals (testimonials, real photos vs stock)
 - Content quality
-- Site structure and navigation
-- Mobile-friendliness signals
+- Site structure
+- Mobile-friendliness
 
 SCORING:
-- 1-3 = Very outdated, broken layouts, no mobile, looks like 2010s template
-- 4-5 = Below average, dated design, generic templates, weak conversion
+- 1-3 = Very outdated, broken, no mobile, 2010s template
+- 4-5 = Below average, dated, generic templates, weak conversion
 - 6-7 = Decent, functional, somewhat modern
 - 8-10 = Modern, professional, conversion-optimized
 
 Respond ONLY with valid JSON (no markdown, no backticks):
 {
   "score": <1-10>,
-  "summary": "<one short sentence describing the design quality>",
+  "summary": "<one short sentence>",
   "key_issues": ["<issue 1>", "<issue 2>", "<issue 3>"]
 }
 
 HTML:
-${html}`;
+${sanitizedHtml}`;
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -155,7 +174,6 @@ ${html}`;
       };
     }
 
-    // Extract JSON robustly — strip markdown, find object boundaries
     let cleaned = text.replace(/```json|```/g, "").trim();
     const jsonStart = cleaned.indexOf("{");
     const jsonEnd = cleaned.lastIndexOf("}");
