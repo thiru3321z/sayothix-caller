@@ -1,11 +1,9 @@
 // lib/analyzer.ts
-// Analyzes scraped leads. Logic: WEBSITE STATUS ONLY (per Sayothix rules)
-// - No website / social / WhatsApp link = HOT
-// - Has website but bad/weak design = WARM
-// - Has good website = COLD (skip — Isabell won't call)
+// Step 1: Quick analysis — categorize by website status only
+// Step 2: AI deep-analysis runs separately for businesses WITH websites
 
 export type Priority = "hot" | "warm" | "cold";
-export type WebsiteStatus = "none" | "social-only" | "whatsapp-only" | "bad-website" | "good-website";
+export type WebsiteStatus = "none" | "social-only" | "whatsapp-only" | "has-website" | "pending-analysis";
 
 export interface RawLead {
   title?: string;
@@ -33,38 +31,22 @@ export interface AnalyzedLead {
   priority: Priority;
   analysis_notes: string;
   status: string;
+  needs_ai_analysis: boolean;
+  design_score: number | null;
 }
 
-const SOCIAL_DOMAINS = [
-  "facebook.com", "fb.com", "instagram.com", "tiktok.com",
-  "twitter.com", "x.com", "linkedin.com", "youtube.com", "linktr.ee",
-];
+const SOCIAL_DOMAINS = ["facebook.com", "fb.com", "instagram.com", "tiktok.com", "twitter.com", "x.com", "linkedin.com", "youtube.com", "linktr.ee"];
 const WHATSAPP_DOMAINS = ["wa.me", "wa.link", "whatsapp.com", "api.whatsapp.com"];
-const FREE_PLATFORMS = ["blogspot.com", "wordpress.com", "wixsite.com", "weebly.com", "webnode"];
 
-function detectWebsiteStatus(website?: string): { status: WebsiteStatus; reason: string } {
-  if (!website || website.trim() === "" || website.length < 5 ||
-      website.toLowerCase().includes("no website")) {
-    return { status: "none", reason: "No website" };
+function detectInitialWebsiteStatus(website?: string): { status: WebsiteStatus; needsAI: boolean } {
+  if (!website || website.trim() === "" || website.length < 5 || website.toLowerCase().includes("no website")) {
+    return { status: "none", needsAI: false };
   }
-
   const url = website.toLowerCase().trim();
-
-  if (WHATSAPP_DOMAINS.some(d => url.includes(d))) {
-    return { status: "whatsapp-only", reason: "WhatsApp link only — no real website" };
-  }
-
-  if (SOCIAL_DOMAINS.some(d => url.includes(d))) {
-    return { status: "social-only", reason: "Social media only — no proper website" };
-  }
-
-  if (FREE_PLATFORMS.some(d => url.includes(d))) {
-    return { status: "bad-website", reason: "Free platform site (Blogspot/Wix-style) — weak design" };
-  }
-
-  // Has a real domain — assume it's a working website
-  // (Deeper SEO/design analysis can be added later)
-  return { status: "good-website", reason: "Has existing website" };
+  if (WHATSAPP_DOMAINS.some(d => url.includes(d))) return { status: "whatsapp-only", needsAI: false };
+  if (SOCIAL_DOMAINS.some(d => url.includes(d))) return { status: "social-only", needsAI: false };
+  // Has a real domain — needs AI analysis
+  return { status: "pending-analysis", needsAI: true };
 }
 
 function normalizePhone(phone?: string): string {
@@ -80,17 +62,15 @@ function detectNiche(industry?: string, title?: string): string {
   const text = `${industry || ""} ${title || ""}`.toLowerCase();
   if (text.includes("dent") || text.includes("pergigian")) return "Dental";
   if (text.includes("workshop") || text.includes("auto") || text.includes("car ") || text.includes("garage")) return "Workshop";
-  if (text.includes("restaurant") || text.includes("cafe") || text.includes("food") ||
-      text.includes("nasi") || text.includes("kopitiam") || text.includes("kedai makan")) return "F&B";
+  if (text.includes("restaurant") || text.includes("cafe") || text.includes("food") || text.includes("nasi") || text.includes("kopitiam") || text.includes("kedai makan")) return "F&B";
   if (text.includes("clinic") || text.includes("medical") || text.includes("klinik")) return "Medical";
   if (text.includes("salon") || text.includes("spa") || text.includes("beauty")) return "Beauty";
   if (text.includes("law") || text.includes("legal")) return "Legal";
   return industry?.trim() || "Other";
 }
 
-// THE BRAIN - per your spec
 export function analyzeLead(raw: RawLead): AnalyzedLead {
-  const { status, reason } = detectWebsiteStatus(raw.website);
+  const { status, needsAI } = detectInitialWebsiteStatus(raw.website);
   const phone = normalizePhone(raw.phone);
   const niche = detectNiche(raw.industry, raw.title);
   const reviews = parseInt(String(raw.reviews || 0)) || 0;
@@ -104,31 +84,27 @@ export function analyzeLead(raw: RawLead): AnalyzedLead {
     case "none":
       gaps.push("no-website");
       priority = "hot";
-      notes = `🔥 No website at all. Perfect target for web design + Google.`;
+      notes = "🔥 No website at all. Perfect target for web design + Google.";
       break;
     case "whatsapp-only":
       gaps.push("no-website", "whatsapp-only");
       priority = "hot";
-      notes = `🔥 WhatsApp link only — no real website. Hot target.`;
+      notes = "🔥 WhatsApp link only — no real website. Hot target.";
       break;
     case "social-only":
       gaps.push("no-website", "social-only");
       priority = "hot";
-      notes = `🔥 Social media only (Facebook/Instagram). No proper website. Hot target.`;
+      notes = "🔥 Social media only (Facebook/Instagram). No proper website.";
       break;
-    case "bad-website":
-      gaps.push("outdated-site", "weak-design");
-      priority = "warm";
-      notes = `⚡ Has a website but on a free/weak platform. Warm — opportunity for redesign.`;
+    case "pending-analysis":
+      // Will be classified by AI - default to cold until analyzed
+      priority = "cold";
+      notes = "⏳ Has website — pending AI design analysis...";
       break;
-    case "good-website":
     default:
       priority = "cold";
-      notes = `❄ Has existing website. Skip — won't be called.`;
-      break;
+      notes = "Has website. Skipping.";
   }
-
-  if (reviews < 10 && status !== "none") gaps.push("few-reviews");
 
   return {
     business_name: (raw.title || "Unknown").trim(),
@@ -144,10 +120,8 @@ export function analyzeLead(raw: RawLead): AnalyzedLead {
     gaps,
     priority,
     analysis_notes: notes,
-    status: priority === "cold" ? "skipped" : "pending",
+    status: priority === "cold" && status !== "pending-analysis" ? "skipped" : "pending",
+    needs_ai_analysis: needsAI,
+    design_score: null,
   };
-}
-
-export function analyzeLeads(rawLeads: RawLead[]): AnalyzedLead[] {
-  return rawLeads.map(analyzeLead);
 }
