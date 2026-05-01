@@ -1,7 +1,10 @@
+// app/api/tools/book-appointment/route.ts
+// Vapi calls this when Isabell triggers the book_appointment tool
+
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
-import { sendAppointmentWhatsApp } from "@/lib/whatsapp";
-import { createMeetEvent } from "@/lib/google-calendar";
+import { supabase } from "../../../../lib/supabase";
+import { sendAppointmentWhatsApp } from "../../../../lib/whatsapp";
+import { createMeetEvent } from "../../../../lib/google-calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -55,11 +58,10 @@ export async function POST(req: NextRequest) {
     let meetLink = "https://meet.google.com/new";
     let calendarEventId: string | null = null;
 
-    // Only create Calendar event if we got a valid ISO timestamp
     if (isoTime) {
       try {
         const startDate = new Date(isoTime);
-        const endDate = new Date(startDate.getTime() + 15 * 60 * 1000); // 15 min meeting
+        const endDate = new Date(startDate.getTime() + 15 * 60 * 1000);
 
         const event = await createMeetEvent({
           summary: `Sayothix x ${lead.business_name}`,
@@ -72,7 +74,6 @@ export async function POST(req: NextRequest) {
         calendarEventId = event.eventId || null;
       } catch (err) {
         console.error("Calendar event creation failed:", err);
-        // Fall back to placeholder link
       }
     }
 
