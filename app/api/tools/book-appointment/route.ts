@@ -11,26 +11,22 @@ export const dynamic = "force-dynamic";
 async function parseToISO(naturalTime: string): Promise<string | null> {
   try {
     const now = new Date().toISOString();
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `Convert natural language times to ISO 8601. Current time: ${now}. Timezone: Asia/Kuala_Lumpur (+08:00). Return ONLY the ISO string, nothing else. If unclear, return "null".`,
-          },
-          { role: "user", content: naturalTime },
-        ],
-        temperature: 0,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 100,
+        system: `Convert natural language times to ISO 8601. Current time: ${now}. Timezone: Asia/Kuala_Lumpur (+08:00). Return ONLY the ISO string, nothing else. If unclear, return "null".`,
+        messages: [{ role: "user", content: naturalTime }],
       }),
     });
     const data = await res.json();
-    const result = data.choices?.[0]?.message?.content?.trim();
+    const result = data.content?.[0]?.text?.trim();
     return result && result !== "null" ? result : null;
   } catch (err) {
     console.error("parseToISO failed:", err);
