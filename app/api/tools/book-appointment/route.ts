@@ -1,13 +1,10 @@
-// app/api/tools/book-appointment/route.ts
-// Vapi calls this when Isabell triggers the book_appointment tool
-
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { sendAppointmentWhatsApp } from "@/lib/whatsapp";
+import { createMeetEvent } from "@/lib/google-calendar";
 
 export const dynamic = "force-dynamic";
 
-// Convert natural language time → ISO 8601 using GPT-4o-mini
 async function parseToISO(naturalTime: string): Promise<string | null> {
   try {
     const now = new Date().toISOString();
@@ -39,10 +36,8 @@ export async function POST(req: NextRequest) {
     const payload = await req.json();
     const toolCall = payload?.message?.toolCalls?.[0];
     const args = toolCall?.function?.arguments || {};
-
     const customerNumber = payload.message.call?.customer?.number;
 
-    // Find lead
     const { data: lead } = await supabase
       .from("leads")
       .select("*")
@@ -50,31 +45,46 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (!lead) {
-      console.warn("No lead found for", customerNumber);
       return NextResponse.json({
-        results: [
-          {
-            toolCallId: toolCall?.id,
-            result: "Lead not found",
-          },
-        ],
+        results: [{ toolCallId: toolCall?.id, result: "Lead not found" }],
       });
     }
 
-    // Parse meeting time to ISO
     const isoTime = await parseToISO(args.meeting_time);
 
-    // Send WhatsApp notification to owner
+    let meetLink = "https://meet.google.com/new";
+    let calendarEventId: string | null = null;
+
+    // Only create Calendar event if we got a valid ISO timestamp
+    if (isoTime) {
+      try {
+        const startDate = new Date(isoTime);
+        const endDate = new Date(startDate.getTime() + 15 * 60 * 1000); // 15 min meeting
+
+        const event = await createMeetEvent({
+          summary: `Sayothix x ${lead.business_name}`,
+          description: `15-min discovery call with ${args.contact_name}.\n\nNiche: ${lead.niche}\nWhatsApp: ${args.whatsapp_number}\nPhone: ${lead.phone}`,
+          startTime: startDate.toISOString(),
+          endTime: endDate.toISOString(),
+        });
+
+        meetLink = event.meetLink || meetLink;
+        calendarEventId = event.eventId || null;
+      } catch (err) {
+        console.error("Calendar event creation failed:", err);
+        // Fall back to placeholder link
+      }
+    }
+
     await sendAppointmentWhatsApp({
       businessName: lead.business_name,
       contactName: args.contact_name || lead.contact_name,
       contactPhone: args.whatsapp_number || lead.phone,
       niche: lead.niche,
-      meetingTime: args.meeting_time, // human-readable
-      meetLink: "https://meet.google.com/new", // TODO: real link in #4
+      meetingTime: args.meeting_time,
+      meetLink: meetLink,
     });
 
-    // Save appointment to DB
     await supabase.from("appointments").insert({
       lead_id: lead.id,
       meeting_time_text: args.meeting_time,
@@ -82,21 +92,17 @@ export async function POST(req: NextRequest) {
       contact_name: args.contact_name,
       whatsapp_number: args.whatsapp_number,
       platform: args.platform || "google_meet",
+      meet_link: meetLink,
+      calendar_event_id: calendarEventId,
     });
 
-    // Update lead status
     await supabase
       .from("leads")
       .update({ status: "appointment" })
       .eq("id", lead.id);
 
     return NextResponse.json({
-      results: [
-        {
-          toolCallId: toolCall.id,
-          result: "Appointment booked. WhatsApp sent.",
-        },
-      ],
+      results: [{ toolCallId: toolCall.id, result: "Appointment booked." }],
     });
   } catch (err: any) {
     console.error("book-appointment error:", err);
