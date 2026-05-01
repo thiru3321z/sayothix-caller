@@ -82,22 +82,6 @@ export async function POST(req: NextRequest) {
     let meetingTime: string | null = null;
     let meetLink: string | null = null;
 
-    if (outcome === "appointment") {
-      meetingTime = extractMeetingTime(transcript);
-      // TODO: integrate Google Calendar API to generate real Meet link
-      meetLink = `https://meet.google.com/new`; // placeholder
-
-      // Send WhatsApp notification to YOU
-      await sendAppointmentWhatsApp({
-        businessName: lead.business_name,
-        contactName: lead.contact_name,
-        contactPhone: lead.phone,
-        niche: lead.niche,
-        meetingTime: meetingTime || "TBD — check transcript",
-        meetLink: meetLink,
-      });
-    }
-
     // Save call to DB
     await supabase.from("calls").insert({
       lead_id: lead.id,
