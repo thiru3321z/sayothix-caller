@@ -20,7 +20,7 @@ export async function placeOutboundCall(params: PlaceCallParams) {
     throw new Error("Missing Vapi environment variables");
   }
 
-  const response = await fetch(`${VAPI_BASE}/call/phone`, {
+  const response = await fetch(`${VAPI_BASE}/call`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
