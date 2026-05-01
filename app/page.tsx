@@ -419,8 +419,16 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
     const data = await res.json();
     setLoading(false);
     if (data.success) {
-      const pendingMsg = data.stats.pending_analysis > 0 ? `\n\n🤖 ${data.stats.pending_analysis} websites queued for AI analysis. Click "Analyze Websites" to begin.` : "";
-      alert(`✅ Imported ${data.count} leads\n🔥 ${data.stats.hot} Hot · ⚡ ${data.stats.warm} Warm · ❄ ${data.stats.cold} Cold${pendingMsg}`);
+      const dups = data.duplicates || {};
+      const skipParts = [];
+      if (dups.in_csv > 0) skipParts.push(`${dups.in_csv} duplicates in CSV`);
+      if (dups.already_in_db > 0) skipParts.push(`${dups.already_in_db} already in database`);
+      if (dups.no_phone > 0) skipParts.push(`${dups.no_phone} had no phone`);
+      const skipMsg = skipParts.length > 0 ? `\n\n⚠️ Skipped: ${skipParts.join(", ")}` : "";
+      const pendingMsg = data.stats.pending_analysis > 0
+        ? `\n\n🤖 ${data.stats.pending_analysis} websites queued for AI analysis.`
+        : "";
+      alert(`✅ Imported ${data.count} new leads\n🔥 ${data.stats.hot} Hot · ⚡ ${data.stats.warm} Warm · ❄ ${data.stats.cold} Cold${skipMsg}${pendingMsg}`);
       await refreshAll();
     } else alert("Upload failed: " + data.error);
   }
@@ -439,7 +447,7 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
 
   async function handleClearAll() {
     if (!confirm("⚠️ Clear ALL leads and call history? This cannot be undone.")) return;
-    if (!confirm("Are you absolutely sure? Type-confirm not required, but this is your last chance.")) return;
+    if (!confirm("Are you absolutely sure? This is your last chance.")) return;
     setLoading(true);
     const res = await fetch("/api/leads/clear", { method: "POST", cache: "no-store" });
     const data = await res.json();
@@ -470,6 +478,47 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
   };
   const pendingAnalysisCount = leads.filter((l: Lead) => l.website_status === "pending-analysis").length;
 
+  // Progress counter (for the called count)
+  const callableLeads = leads.filter((l: Lead) => l.status !== "skipped");
+  const calledLeads = callableLeads.filter((l: Lead) => l.status !== "pending");
+  const calledCount = calledLeads.length;
+  const totalCallable = callableLeads.length;
+  const progressPct = totalCallable > 0 ? Math.round((calledCount / totalCallable) * 100) : 0;
+
+  // Helper: get checkbox style based on status
+  function getCheckboxStyle(status: string) {
+    const base = {
+      width: 20,
+      height: 20,
+      borderRadius: 4,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: 13,
+      fontWeight: 700,
+      color: "#fff",
+      flexShrink: 0,
+    };
+    switch (status) {
+      case "appointment":
+        return { ...base, background: T.green, content: "✓" };
+      case "call-back":
+        return { ...base, background: T.warm, content: "✓" };
+      case "not-interested":
+        return { ...base, background: T.hot, content: "✓" };
+      case "no-answer":
+        return { ...base, background: T.textDim, content: "✓" };
+      case "not-in-service":
+        return { ...base, background: T.hot, content: "✗" };
+      case "called":
+        return { ...base, background: T.cold, content: "✓" };
+      case "skipped":
+        return { ...base, background: "transparent", border: `2px dashed ${T.border}`, color: T.textVeryDim, content: "—" };
+      default: // pending
+        return { ...base, background: "transparent", border: `2px solid ${T.border}`, color: "transparent", content: "" };
+    }
+  }
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -498,6 +547,7 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
         </div>
       </div>
 
+      {/* CSV Upload Zone */}
       <div onClick={() => fileInputRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
@@ -539,7 +589,8 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+      {/* Filter pills */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         {[
           { id: "all",  label: `All · ${counts.all}`,    color: T.text   },
           { id: "hot",  label: `🔥 Hot · ${counts.hot}`, color: T.hot    },
@@ -562,9 +613,64 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
         )}
       </div>
 
+      {/* PROGRESS BAR */}
+      <div style={{ background: T.card, borderRadius: 12, padding: 16, marginBottom: 12, border: `1px solid ${T.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>
+            Calling Progress
+          </div>
+          <div style={{ fontSize: 12, color: T.textDim }}>
+            <span style={{ color: T.text, fontWeight: 700 }}>{calledCount}</span> / {totalCallable} called · {progressPct}%
+          </div>
+        </div>
+        <div style={{ height: 6, background: T.bg, borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${progressPct}%`, background: `linear-gradient(90deg, ${T.green}, ${T.accent})`, transition: "width 0.3s" }}></div>
+        </div>
+      </div>
+
+      {/* LEGEND */}
+      <div style={{ background: T.card, borderRadius: 12, padding: "12px 16px", marginBottom: 16, border: `1px solid ${T.border}` }}>
+        <div style={{ fontSize: 10, color: T.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+          Status Legend
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 11, color: T.textMuted }}>
+          {[
+            { bg: "transparent", border: `2px solid ${T.border}`, mark: "", label: "Not called yet" },
+            { bg: T.cold, border: "none", mark: "✓", label: "Called" },
+            { bg: T.green, border: "none", mark: "✓", label: "Appointment booked" },
+            { bg: T.warm, border: "none", mark: "✓", label: "Call back" },
+            { bg: T.hot, border: "none", mark: "✓", label: "Not interested" },
+            { bg: T.textDim, border: "none", mark: "✓", label: "No answer" },
+            { bg: T.hot, border: "none", mark: "✗", label: "Not in service" },
+            { bg: "transparent", border: `2px dashed ${T.border}`, mark: "—", label: "Skipped (cold)", color: T.textVeryDim },
+          ].map((item, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 18, height: 18, borderRadius: 4,
+                background: item.bg, border: item.border,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: item.color || "#fff", fontSize: 11, fontWeight: 700,
+                flexShrink: 0,
+              }}>{item.mark}</div>
+              <span>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* TABLE */}
       <div style={{ background: T.card, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1.2fr 1.3fr 0.9fr 0.8fr 0.9fr 1fr 100px", padding: "14px 16px", borderBottom: `1px solid ${T.border}`, fontSize: 10, color: T.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
-          <div>Business</div><div>Phone</div><div>Website</div><div>Web Design</div><div>Rating</div><div>Reviews</div><div>Priority</div><div></div>
+        {/* Header */}
+        <div style={{ display: "grid", gridTemplateColumns: "40px 2.5fr 1.2fr 1.3fr 0.9fr 0.8fr 0.9fr 1fr 100px", padding: "14px 16px", borderBottom: `1px solid ${T.border}`, fontSize: 10, color: T.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
+          <div></div>
+          <div>Business</div>
+          <div>Phone</div>
+          <div>Website</div>
+          <div>Web Design</div>
+          <div>Rating</div>
+          <div>Reviews</div>
+          <div>Priority</div>
+          <div></div>
         </div>
 
         {filtered.length === 0 && (
@@ -580,9 +686,10 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
           const n = nicheColors[lead.niche] || nicheColors.Other;
           const isCold = lead.priority === "cold";
           const isPending = lead.website_status === "pending-analysis";
+          const checkboxStyle = getCheckboxStyle(lead.status);
 
           // Web design pill
-         let webDesignStyle = { bg: "#1f2235", text: T.textDim, border: T.border };
+          let webDesignStyle = { bg: "#1f2235", text: T.textDim, border: T.border };
           let webDesignLabel = ws.webDesign;
 
           if (ws.webDesign === "None") {
@@ -609,12 +716,27 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
 
           return (
             <div key={lead.id} style={{
-              display: "grid", gridTemplateColumns: "2.5fr 1.2fr 1.3fr 0.9fr 0.8fr 0.9fr 1fr 100px",
+              display: "grid", gridTemplateColumns: "40px 2.5fr 1.2fr 1.3fr 0.9fr 0.8fr 0.9fr 1fr 100px",
               padding: "16px", borderBottom: `1px solid ${T.border}`,
               fontSize: 13, alignItems: "center",
               opacity: isCold ? 0.55 : 1,
               background: lead.priority === "hot" ? `${T.hotBg}33` : "transparent"
             }}>
+              {/* Checkbox */}
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <div style={{
+                  width: 20, height: 20, borderRadius: 4,
+                  background: checkboxStyle.background,
+                  border: checkboxStyle.border || "none",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: checkboxStyle.color || "#fff",
+                  fontSize: 13, fontWeight: 700,
+                }}>
+                  {checkboxStyle.content}
+                </div>
+              </div>
+
+              {/* Business name + niche */}
               <div>
                 <div style={{ fontWeight: 600, color: T.text, marginBottom: 4, lineHeight: 1.3 }}>{lead.business_name}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
@@ -632,8 +754,10 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
                 )}
               </div>
 
+              {/* Phone */}
               <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.textMuted }}>{lead.phone}</div>
 
+              {/* Website */}
               <div>
                 {lead.website && lead.website_status !== "none" ? (
                   <a href={lead.website} target="_blank" rel="noreferrer"
@@ -645,6 +769,7 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
                 )}
               </div>
 
+              {/* Web Design score */}
               <div>
                 <span style={{ background: webDesignStyle.bg, color: webDesignStyle.text, fontSize: 10, padding: "3px 9px", borderRadius: 12, fontWeight: 600, border: `1px solid ${webDesignStyle.border}`, display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {isPending && <Loader2 size={9} style={{ animation: "spin 1s linear infinite" }} />}
@@ -652,21 +777,25 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
                 </span>
               </div>
 
+              {/* Rating */}
               <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: T.text }}>
                 <Star size={11} fill={T.warm} color={T.warm} />
                 <span style={{ fontWeight: 600 }}>{lead.rating || "—"}</span>
               </div>
 
+              {/* Reviews */}
               <div style={{ fontSize: 12, color: lead.reviews_count < 30 ? T.hot : T.textMuted, fontWeight: lead.reviews_count < 30 ? 600 : 400 }}>
                 {lead.reviews_count}
               </div>
 
+              {/* Priority */}
               <div>
                 <span style={{ background: p.bg, color: p.text, fontSize: 11, padding: "5px 10px", borderRadius: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${p.border}` }}>
                   <PIcon size={11} /> {p.label}
                 </span>
               </div>
 
+              {/* Call button */}
               <div>
                 {!isCold ? (
                   <button onClick={() => onCall(lead.id)} disabled={loading}
@@ -684,6 +813,7 @@ function LeadsTab({ leads, filter, setFilter, searchQuery, setSearchQuery, onCal
     </div>
   );
 }
+
 
 function HistoryTab({ calls, selectedCall, setSelectedCall }: any) {
   if (calls.length === 0) {
