@@ -24,15 +24,27 @@ export async function createMeetEvent(params: CreateEventParams) {
 
   const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
+  const attendees: { email: string }[] = [];
+  if (process.env.OWNER_EMAIL) attendees.push({ email: process.env.OWNER_EMAIL });
+  if (params.attendeeEmail) attendees.push({ email: params.attendeeEmail });
+
   const event = await calendar.events.insert({
     calendarId: "primary",
     conferenceDataVersion: 1,
+    sendUpdates: "all",
     requestBody: {
       summary: params.summary,
       description: params.description,
       start: { dateTime: params.startTime, timeZone: "Asia/Kuala_Lumpur" },
       end: { dateTime: params.endTime, timeZone: "Asia/Kuala_Lumpur" },
-      attendees: params.attendeeEmail ? [{ email: params.attendeeEmail }] : [],
+      attendees,
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "email", minutes: 60 },
+          { method: "popup", minutes: 15 },
+        ],
+      },
       conferenceData: {
         createRequest: {
           requestId: `sayothix-${Date.now()}`,
