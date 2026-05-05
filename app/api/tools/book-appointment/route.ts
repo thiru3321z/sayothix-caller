@@ -1,5 +1,4 @@
 // app/api/tools/book-appointment/route.ts
-// Vapi calls this when Isabell triggers the book_appointment tool
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase";
@@ -7,6 +6,15 @@ import { sendAppointmentWhatsApp } from "../../../../lib/whatsapp";
 import { createMeetEvent } from "../../../../lib/google-calendar";
 
 export const dynamic = "force-dynamic";
+
+function normalizeMalaysianPhone(phone: string): string {
+  if (!phone) return phone;
+  const cleaned = phone.replace(/\s|-/g, "");
+  if (cleaned.startsWith("+")) return cleaned;
+  if (cleaned.startsWith("60")) return `+${cleaned}`;
+  if (cleaned.startsWith("0")) return `+6${cleaned}`;
+  return cleaned;
+}
 
 async function parseToISO(naturalTime: string): Promise<string | null> {
   try {
@@ -37,15 +45,25 @@ async function parseToISO(naturalTime: string): Promise<string | null> {
 export async function POST(req: NextRequest) {
   try {
     const payload = await req.json();
+    console.log("📥 book-appointment payload:", JSON.stringify(payload).slice(0, 500));
+
     const toolCall = payload?.message?.toolCalls?.[0];
     const args = toolCall?.function?.arguments || {};
-    const customerNumber = payload.message.call?.customer?.number;
+    console.log("📋 args:", args);
 
-    const { data: lead } = await supabase
+    const customerNumber = payload.message.call?.customer?.number;
+    console.log("📞 customer number:", customerNumber);
+
+    const whatsappNumber = normalizeMalaysianPhone(args.whatsapp_number);
+    console.log("📱 normalized whatsapp:", whatsappNumber);
+
+    const { data: lead, error: leadErr } = await supabase
       .from("leads")
       .select("*")
       .eq("phone", customerNumber)
       .single();
+
+    console.log("🔍 lead found:", lead ? lead.business_name : "NONE", "error:", leadErr);
 
     if (!lead) {
       return NextResponse.json({
@@ -54,6 +72,7 @@ export async function POST(req: NextRequest) {
     }
 
     const isoTime = await parseToISO(args.meeting_time);
+    console.log("⏰ ISO time:", isoTime);
 
     let meetLink = "https://meet.google.com/new";
     let calendarEventId: string | null = null;
@@ -65,33 +84,39 @@ export async function POST(req: NextRequest) {
 
         const event = await createMeetEvent({
           summary: `Sayothix x ${lead.business_name}`,
-          description: `15-min discovery call with ${args.contact_name}.\n\nNiche: ${lead.niche}\nWhatsApp: ${args.whatsapp_number}\nPhone: ${lead.phone}`,
+          description: `15-min discovery call with ${args.contact_name}.\n\nNiche: ${lead.niche}\nWhatsApp: ${whatsappNumber}\nPhone: ${lead.phone}`,
           startTime: startDate.toISOString(),
           endTime: endDate.toISOString(),
         });
 
         meetLink = event.meetLink || meetLink;
         calendarEventId = event.eventId || null;
+        console.log("📅 calendar event created:", calendarEventId);
       } catch (err) {
         console.error("Calendar event creation failed:", err);
       }
     }
 
-    await sendAppointmentWhatsApp({
-      businessName: lead.business_name,
-      contactName: args.contact_name || lead.contact_name,
-      contactPhone: args.whatsapp_number || lead.phone,
-      niche: lead.niche,
-      meetingTime: args.meeting_time,
-      meetLink: meetLink,
-    });
+    try {
+      await sendAppointmentWhatsApp({
+        businessName: lead.business_name,
+        contactName: args.contact_name || lead.contact_name,
+        contactPhone: whatsappNumber || lead.phone,
+        niche: lead.niche,
+        meetingTime: args.meeting_time,
+        meetLink: meetLink,
+      });
+      console.log("✅ WhatsApp sent");
+    } catch (err) {
+      console.error("WhatsApp send failed:", err);
+    }
 
     await supabase.from("appointments").insert({
       lead_id: lead.id,
       meeting_time_text: args.meeting_time,
       meeting_time_iso: isoTime,
       contact_name: args.contact_name,
-      whatsapp_number: args.whatsapp_number,
+      whatsapp_number: whatsappNumber,
       platform: args.platform || "google_meet",
       meet_link: meetLink,
       calendar_event_id: calendarEventId,
