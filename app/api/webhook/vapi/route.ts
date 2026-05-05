@@ -73,11 +73,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Format transcript as array of {speaker, text}
-    const formattedTranscript = messages.map((m: any) => ({
-      speaker: m.role === "assistant" ? "agent" : "lead",
-      text: m.message || m.content || "",
-    }));
+    // ✅ Filter out system prompts and tool calls — only keep actual conversation
+    const formattedTranscript = messages
+      .filter((m: any) =>
+        m.role !== "system" &&
+        m.role !== "tool_calls" &&
+        m.role !== "tool_call_result" &&
+        m.role !== "function" &&
+        (m.message || m.content) // skip empty messages
+      )
+      .map((m: any) => ({
+        speaker: m.role === "assistant" ? "agent" : "lead",
+        text: m.message || m.content || "",
+      }));
 
     let meetingTime: string | null = null;
     let meetLink: string | null = null;
